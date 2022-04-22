@@ -1,0 +1,85 @@
+---
+# Unix ESXI Server Tester
+
+# - name: VMWARE ESXI Tester
+#   hosts: all
+#   ignore_errors: true
+#   gather_facts: false
+
+#   tasks:
+#     - name: jump check
+#       shell: hostname; uname -a
+   
+#     - name: prepare command
+#       set_fact:
+#         cmd: "hostname"
+#         node_ip: "{{ hostvars[inventory_hostname].ipaddress }}" #ESXI ipaddress
+   
+#     - name: show rcopy link 
+#       shell: |
+#         sshpass -p '{{ my_pass }}' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null '{{ my_user }}'@'{{ node_ip }}' "{{ cmd }}"
+#       register: output
+#       no_log: true
+      
+#     - debug: msg="{{ output.stdout }}"
+
+#########################################################
+
+# - name: Role ensures that the ssh tunnel is setup
+#   hosts: localhost
+#   connection: local
+#   ignore_errors: true
+#   gather_facts: false
+#   tasks:
+#     - include_role:
+#         name: ansible-role-ssh-tunneling
+
+# - name: Device Tester
+#   hosts: all
+#   gather_facts: no
+#   vars:
+#     ansible_ssh_common_args: '{{ hostvars.localhost.ssh_args }}'
+  
+#   tasks:
+#     - name: test vmware commands
+#       shell: hostname
+
+- name: Role ensures that the socks tunnel is setup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  tasks:
+
+    - include_role:
+        name: event-socks-tunnel
+      vars:
+        acc_id: "{{ blueid_shortcode }}"
+        transaction_id: "{{ tower_job_id }}"
+      when: jh_ip is defined or jh1_ip is defined  # only if endpoint is behind a jumphost
+
+#######################################################
+
+- hosts: all
+  gather_facts: false
+  vars:
+    account_code: "{{ blueid_shortcode }}"
+    trans_num: "{{ tower_job_id }}"
+    vmware:
+      host: '{{ lookup("env", "VMWARE_HOST") }}'
+      username: '{{ lookup("env", "VMWARE_USER") }}'
+      password: '{{ lookup("env", "VMWARE_PASSWORD") }}'
+    
+  tasks: 
+    - name: vc connection test
+      win_shell: >-
+        import-module VMware.VimAutomation.Core;
+        $DomainUser   = "{{ vmware.username }}";
+        $pass         = "{{ vmware.password }}";
+        $SecureString = ConvertTo-SecureString $pass -AsPlainText -Force;
+        $credentials  = New-Object -typename System.Management.Automation.PsCredential -ArgumentList $DomainUser, $SecureString;
+        Connect-VIServer {{ vmware.host }} -Credential $credentials;
+        write-host "Current connected vc: " $global:DefaultVIServer;
+        disconnect-viserver {{ vmware.host }} -Force -Confirm:$false;
+      no_log: false
+      ignore_errors: true
