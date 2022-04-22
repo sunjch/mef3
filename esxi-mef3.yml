@@ -1,0 +1,57 @@
+ # - name: checking C drive space
+  #   win_shell: |-
+  #     $c=(Get-WMIObject Win32_LogicalDisk  | Where-Object{$_.DriveType -eq 3 -and $_.Name -eq 'C:'}  |Select-Object @{n='FreeSpace';e={"{0:n2}" -f ($_.freespace/1gb)}}).FreeSpace | ConvertTo-JSON
+  #     $c
+  #   register: spaceC
+  #
+  # - name: failing execution if c drive is less than 3GB
+  #   set_fact:
+  #     cspaces: "{{ spaceC.stdout | from_json }}"
+  #   failed_when: cspaces|int <= 3
+
+  - block:
+    - name: Copy powershell and 7zip
+      win_copy:
+        src: files/
+        dest: "{{ file_path }}"
+
+    - name: 'Create a directory for tmp scan results'
+      win_file:
+        path: "{{ file_path }}ESXi-mef3"
+        state: directory
+
+    - name: To extract mef3 file from vcenters and esxi severs
+      win_shell: |
+        import-module VMware.VimAutomation.Core;
+        Set-PowerCLIConfiguration -DefaultVIServerMode multiple -Confirm:$false;
+        $DomainUser   = "{{ vc_username }}";
+        $pass         = "{{ vc_password }}";
+        $SecureString = ConvertTo-SecureString $pass -AsPlainText -Force;
+        $credentials  = New-Object -typename System.Management.Automation.PsCredential -ArgumentList $DomainUser, $SecureString;
+        Connect-VIServer {{ vc_server1 }},{{ vc_server2 }} -Credential $credentials
+        write-host "Current connected vc: " $global:DefaultVIServer;
+        {{ script_path }} -DataCenter * -Customer {{ customer_name }} -pathTo7zip {{ file_path }};
+        disconnect-viserver {{ vc_server1 }},{{ vc_server2 }} -Force -Confirm:$false;
+      args:
+        chdir: "{{ file_path }}ESXi-mef3"
+      no_log: true
+      ignore_errors: true
+
+    - name: Compress a directory as the root of the archive
+      win_shell: |
+        $date = Get-Date -format "yyyy-MM-dd-HHmmss";
+        $src = "{{ file_path }}ESXi-mef3";
+        $dest = "{{ backup_file_path }}host-backup-"+$date;
+        if (Test-Path -path "{{ file_path }}ESXi-mef3.zip") {
+            Remove-Item "{{ file_path }}ESXi-mef3.zip";
+           }
+        $source = "{{ file_path }}ESXi-mef3\*\*.mef3";
+        $archive = "{{ file_path }}ESXi-mef3.zip";
+        Compress-Archive -Path $source -DestinationPath $archive;
+        Move-Item -Path $src -Destination $dest;
+    - name: Send email notificaiton of mef3
+      win_shell: |
+        $date = Get-Date -format "yyyy-MM-dd-HHmmss";
+        $subject = "{{ mail_subject }}-"+$date;
+        $filename = "{{ file_path }}ESXi-mef3.zip";
+        Send-MailMessage -Attachments $fileName -SmtpServer "{{ smtp_host_name }}" -To "{{ mail_to }}" -From "{{ mail_from }}" -Subject $subject;
